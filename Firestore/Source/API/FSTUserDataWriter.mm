@@ -21,11 +21,15 @@
 #include "Firestore/Source/API/converters.h"
 #include "Firestore/core/src/model/server_timestamp_util.h"
 #include "Firestore/core/src/model/value_util.h"
+#include "Firestore/core/src/model/database_id.h"
+#include "Firestore/core/src/model/document_key.h"
+#include "Firestore/core/src/util/log.h"
 #include "Firestore/core/src/nanopb/nanopb_util.h"
 #include "Firestore/core/src/util/string_apple.h"
 
 @class FIRTimestamp;
 
+namespace api = firebase::firestore::api;
 namespace util = firebase::firestore::util;
 namespace model = firebase::firestore::model;
 namespace nanopb = firebase::firestore::nanopb;
@@ -34,10 +38,17 @@ using firebase::firestore::google_firestore_v1_Value;
 using firebase::firestore::google_firestore_v1_MapValue;
 using firebase::firestore::google_firestore_v1_ArrayValue;
 using firebase::firestore::google_protobuf_Timestamp;
+using nanopb::MakeNSData;
+using nanopb::MakeBytesArray;
+using nanopb::MakeByteString;
+using api::MakeFIRGeoPoint;
+using api::MakeFIRTimestamp;
 using model::GetTypeOrder;
 using model::TypeOrder;
 using model::GetPreviousValue;
 using model::GetLocalWriteTime;
+using model::DatabaseId;
+using model::DocumentKey;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -77,11 +88,11 @@ NS_ASSUME_NONNULL_BEGIN
                  ? @(value.integer_value)
                  : @(value.double_value);
     case TypeOrder::kString:
-      return util::MakeNSString(value.string_value);
+      return util::MakeNSString(nanopb::MakeStringView(value.string_value));
     case TypeOrder::kBlob:
       return MakeNSData(value.bytes_value);
     case TypeOrder::kGeoPoint:
-      return MakeFIRGeoPoint(value.geo_point_value);
+      return MakeFIRGeoPoint(GeoPoint(value.geo_point_value.latitude, value.geo_point_value.longitude));
   }
 
   UNREACHABLE();
@@ -110,10 +121,8 @@ NS_ASSUME_NONNULL_BEGIN
   switch (_serverTimestampBehavior) {
     case FIRServerTimestampBehavior::FIRServerTimestampBehaviorNone:
       return [NSNull null];
-    case FIRServerTimestampBehavior::FIRServerTimestampBehaviorEstimate: {
-      FieldValue local_write_time = FieldValue::FromTimestamp(sts.local_write_time());
-      return [self convertedTimestamp:local_write_time];
-    }
+    case FIRServerTimestampBehavior::FIRServerTimestampBehaviorEstimate:
+      return [self convertedTimestamp:GetLocalWriteTime(serverTimestampValue)];
     case FIRServerTimestampBehavior::FIRServerTimestampBehaviorPrevious: {
       auto previous_value = GetPreviousValue(serverTimestampValue);
       return previous_value ? [self convertedValue:*previous_value] : [NSNull null];
@@ -123,36 +132,25 @@ NS_ASSUME_NONNULL_BEGIN
   UNREACHABLE();
 }
 
-- (NSObject *)convertedTimestamp:(const google_protobuf_Timestamp &)value {
-  return new Timestamp(value.getSeconds(), value.getNanos());
-}
-
--(NSArray(<Object> convertedArray(ArrayValue arrayValue) {
-  ArrayList<Object> result = new ArrayList<>(arrayValue.getValuesCount());
-  for (Value v : arrayValue.getValuesList()) {
-    result.add(convertedValue(v));
-  }
-  return result;
+- (FIRTimestamp *)convertedTimestamp:(const google_protobuf_Timestamp &)value {
+  return MakeFIRTimestamp({value.seconds, value.nanos});
 }
 
 - (FIRDocumentReference *)convertedReference:(const google_firestore_v1_Value &)value {
-  const auto &ref = value.reference_value();
-  const DatabaseId &refDatabase = DatabaseId.fromName(value.reference_value);
-  const DatabaseId &database = DocumentKey.fromName(value.reference_value);
+  const auto &ref = value.reference_value;
+  const DatabaseId &refDatabase = DatabaseId::fromName(value.reference_value);
+  const DatabaseId &database = DocumentKey::fromName(value.reference_value);
   if (refDatabase != database) {
-    LOG_WARN("Document %s contains a document reference within a different database (%s/%s) which "
+    LOG_WARN("Document reference is for a different database (%s/%s) which "
              "is not supported. It will be treated as a reference within the current database "
              "(%s/%s) instead.",
-             _snapshot.CreateReference().Path(), refDatabase.project_id(),
+             refDatabase.project_id(),
              refDatabase.database_id(), database.project_id(), database.database_id());
   }
   const DocumentKey &key = ref.key();
-  return [[FIRDocumentReference alloc] initWithKey:key firestore:_snapshot.firestore()];
+  return [[FIRDocumentReference alloc] initWithKey:key firestore:_firestore];
 }
 
-- (id)convertedTimestamp:(const FieldValue &)value {
-  return MakeFIRTimestamp(value.timestamp_value());
-}
 
 @end
 

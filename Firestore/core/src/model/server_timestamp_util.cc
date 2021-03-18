@@ -51,27 +51,27 @@ bool IsServerTimestamp(const google_firestore_v1_Value& value) {
   return false;
 }
 
-const google_firestore_v1_Value& GetLocalWriteTime(
+const google_protobuf_Timestamp& GetLocalWriteTime(
     const firebase::firestore::google_firestore_v1_Value& value) {
   for (size_t i = 0; i < value.map_value.fields_count; ++i) {
     const auto& field = value.map_value.fields[i];
     absl::string_view key = nanopb::MakeStringView(field.key);
-    if (key == kLocalWriteTimeKey) {
-      return field.value;
+    if (key == kLocalWriteTimeKey && field.value.which_value_type == google_firestore_v1_Value_timestamp_value_tag) {
+      return field.value.timestamp_value;
     }
   }
 
   HARD_FAIL("LocalWriteTime not found");
 }
 
-absl::optional<const google_firestore_v1_Value&> GetPreviousValue(
+absl::optional<google_firestore_v1_Value> GetPreviousValue(
     const google_firestore_v1_Value& value) {
   for (size_t i = 0; i < value.map_value.fields_count; ++i) {
     const auto& field = value.map_value.fields[i];
     absl::string_view key = nanopb::MakeStringView(field.key);
     if (key == kPreviousValueKey) {
-      if (isServerTimestamp(field.value)) {
-        return getPreviousValue(field.value);
+      if (IsServerTimestamp(field.value)) {
+        return GetPreviousValue(field.value);
       }
     }
   }
