@@ -1,0 +1,159 @@
+// Copyright 2020 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#import <Firestore/core/src/nanopb/nanopb_util.h>
+#import <Firestore/core/src/util/hard_assert.h>
+#import <Foundation/Foundation.h>
+
+#include "Firestore/Protos/nanopb/google/firestore/v1/document.nanopb.h"
+#include "Firestore/Source/API/FSTUserDataWriter.h"
+#include "Firestore/Source/API/converters.h"
+#include "Firestore/core/src/model/server_timestamp_util.h"
+#include "Firestore/core/src/model/value_util.h"
+#include "Firestore/core/src/nanopb/nanopb_util.h"
+#include "Firestore/core/src/util/string_apple.h"
+
+@class FIRTimestamp;
+
+namespace util = firebase::firestore::util;
+namespace model = firebase::firestore::model;
+namespace nanopb = firebase::firestore::nanopb;
+
+using firebase::firestore::google_firestore_v1_Value;
+using firebase::firestore::google_firestore_v1_MapValue;
+using firebase::firestore::google_firestore_v1_ArrayValue;
+using firebase::firestore::google_protobuf_Timestamp;
+using model::GetTypeOrder;
+using model::TypeOrder;
+using model::GetPreviousValue;
+using model::GetLocalWriteTime;
+
+NS_ASSUME_NONNULL_BEGIN
+
+@implementation FSTUserDataWriter {
+  FIRFirestore *_firestore;
+  FIRServerTimestampBehavior _serverTimestampBehavior;
+}
+
+- (instancetype)initWithFirestore:(FIRFirestore *)firestore
+          serverTimestampBehavior:(FIRServerTimestampBehavior)serverTimestampBehavior {
+  self = [super init];
+  if (self) {
+    _firestore = firestore;
+    _serverTimestampBehavior = serverTimestampBehavior;
+  }
+  return self;
+}
+
+- (id)convertedValue:(const firebase::firestore::google_firestore_v1_Value &)value {
+  switch (GetTypeOrder(value)) {
+    case TypeOrder::kMap:
+      return [self convertedObject:value.map_value];
+    case TypeOrder::kArray:
+      return [self convertedArray:value.array_value];
+    case TypeOrder::kReference:
+      return [self convertedReference:value];
+    case TypeOrder::kTimestamp:
+      return [self convertedTimestamp:value.timestamp_value];
+    case TypeOrder::kServerTimestamp:
+      return [self convertedServerTimestamp:value];
+    case TypeOrder::kNull:
+      return [NSNull null];
+    case TypeOrder::kBoolean:
+      return value.boolean_value ? @YES : @NO;
+    case TypeOrder::kNumber:
+      return value.which_value_type == google_firestore_v1_Value_integer_value_tag
+                 ? @(value.integer_value)
+                 : @(value.double_value);
+    case TypeOrder::kString:
+      return util::MakeNSString(value.string_value);
+    case TypeOrder::kBlob:
+      return MakeNSData(value.bytes_value);
+    case TypeOrder::kGeoPoint:
+      return MakeFIRGeoPoint(value.geo_point_value);
+  }
+
+  UNREACHABLE();
+}
+
+- (NSDictionary<NSString *, id> *)convertedObject:(const google_firestore_v1_MapValue &)mapValue {
+  NSMutableDictionary *result = [NSMutableDictionary dictionary];
+  for (pb_size_t i = 0; i < mapValue.fields_count; ++i) {
+    const std::string &key = nanopb::MakeString(mapValue.fields[i].key);
+    const google_firestore_v1_Value &value = mapValue.fields[i].value;
+
+    result[util::MakeNSString(key)] = [self convertedValue:value];
+  }
+  return result;
+}
+
+- (NSArray<id> *)convertedArray:(const google_firestore_v1_ArrayValue &)arrayValue {
+  NSMutableArray *result = [NSMutableArray arrayWithCapacity:arrayValue.values_count];
+  for (pb_size_t i = 0; i < arrayValue.values_count; ++i) {
+    [result addObject:[self convertedValue:arrayValue.values[i]]];
+  }
+  return result;
+}
+
+- (id)convertedServerTimestamp:(const google_firestore_v1_Value &)serverTimestampValue {
+  switch (_serverTimestampBehavior) {
+    case FIRServerTimestampBehavior::FIRServerTimestampBehaviorNone:
+      return [NSNull null];
+    case FIRServerTimestampBehavior::FIRServerTimestampBehaviorEstimate: {
+      FieldValue local_write_time = FieldValue::FromTimestamp(sts.local_write_time());
+      return [self convertedTimestamp:local_write_time];
+    }
+    case FIRServerTimestampBehavior::FIRServerTimestampBehaviorPrevious: {
+      auto previous_value = GetPreviousValue(serverTimestampValue);
+      return previous_value ? [self convertedValue:*previous_value] : [NSNull null];
+    }
+  }
+
+  UNREACHABLE();
+}
+
+- (NSObject *)convertedTimestamp:(const google_protobuf_Timestamp &)value {
+  return new Timestamp(value.getSeconds(), value.getNanos());
+}
+
+-(NSArray(<Object> convertedArray(ArrayValue arrayValue) {
+  ArrayList<Object> result = new ArrayList<>(arrayValue.getValuesCount());
+  for (Value v : arrayValue.getValuesList()) {
+    result.add(convertedValue(v));
+  }
+  return result;
+}
+
+- (FIRDocumentReference *)convertedReference:(const google_firestore_v1_Value &)value {
+  const auto &ref = value.reference_value();
+  const DatabaseId &refDatabase = DatabaseId.fromName(value.reference_value);
+  const DatabaseId &database = DocumentKey.fromName(value.reference_value);
+  if (refDatabase != database) {
+    LOG_WARN("Document %s contains a document reference within a different database (%s/%s) which "
+             "is not supported. It will be treated as a reference within the current database "
+             "(%s/%s) instead.",
+             _snapshot.CreateReference().Path(), refDatabase.project_id(),
+             refDatabase.database_id(), database.project_id(), database.database_id());
+  }
+  const DocumentKey &key = ref.key();
+  return [[FIRDocumentReference alloc] initWithKey:key firestore:_snapshot.firestore()];
+}
+
+- (id)convertedTimestamp:(const FieldValue &)value {
+  return MakeFIRTimestamp(value.timestamp_value());
+}
+
+@end
+
+NS_ASSUME_NONNULL_END

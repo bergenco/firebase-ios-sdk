@@ -22,8 +22,6 @@
 #include "Firestore/core/src/model/database_id.h"
 #include "Firestore/core/src/model/model_fwd.h"
 
-// TODO(mutabledoucments): Replace with FSTUserDataReader
-
 @class FIRTimestamp;
 
 namespace core = firebase::firestore::core;
@@ -61,7 +59,7 @@ typedef id _Nullable (^FSTPreConverterBlock)(id _Nullable);
 /**
  * Helper for parsing raw user input (provided via the API) into internal model classes.
  */
-@interface FSTUserDataConverter : NSObject
+@interface FSTUserDataReader : NSObject
 
 - (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithDatabaseID:(model::DatabaseId)databaseID

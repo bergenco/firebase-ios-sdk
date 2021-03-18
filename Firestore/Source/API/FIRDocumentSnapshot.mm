@@ -68,6 +68,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 namespace {
 
+// TODO(mutabledocuments): Remove since we only use FIRServerTimestampBehavior
+
 /**
  * Converts a public FIRServerTimestampBehavior into its internal equivalent.
  */
@@ -207,6 +209,7 @@ ServerTimestampBehavior InternalServerTimestampBehavior(FIRServerTimestampBehavi
   return FieldValueOptions(InternalServerTimestampBehavior(serverTimestampBehavior));
 }
 
+// TODO(mutabledocuments): Replace with UserDataWriter
 - (id)convertedValue:(FieldValue)value options:(const FieldValueOptions &)options {
   switch (value.type()) {
     case FieldValue::Type::Null:

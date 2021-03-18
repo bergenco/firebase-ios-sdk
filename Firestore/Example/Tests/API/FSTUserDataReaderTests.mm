@@ -47,12 +47,10 @@ using firebase::firestore::model::SetMutation;
 using firebase::firestore::nanopb::MakeNSData;
 using firebase::firestore::testutil::Field;
 
-// TODO(mutabledoucments): Replace with FSTUserDataReaderTests
-
-@interface FSTUserDataConverterTests : XCTestCase
+@interface FSTUserDataReaderTests : XCTestCase
 @end
 
-@implementation FSTUserDataConverterTests
+@implementation FSTUserDataReaderTests
 
 - (void)testConvertsIntegers {
   NSArray<NSNumber *> *values = @[
@@ -97,7 +95,7 @@ using firebase::firestore::testutil::Field;
 }
 
 - (void)testConvertsUnsignedCharToInteger {
-  // See comments in FSTUserDataConverter regarding handling of signed char. Essentially, signed
+  // See comments in FSTUserDataReader regarding handling of signed char. Essentially, signed
   // char has to be treated as boolean. Unsigned chars could conceivably be handled consistently
   // with signed chars but on arm64 these end up being stored as signed shorts. This forces us to
   // choose, and it's more useful to support shorts as Integers than it is to treat unsigned char as
