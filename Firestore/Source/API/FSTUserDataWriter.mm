@@ -18,14 +18,18 @@
 
 #include "Firestore/Protos/nanopb/google/firestore/v1/document.nanopb.h"
 #include "Firestore/Source/API/FSTUserDataWriter.h"
+#include "Firestore/Source/API/FIRDocumentReference+Internal.h"
 #include "Firestore/Source/API/converters.h"
 #include "Firestore/core/src/model/server_timestamp_util.h"
 #include "Firestore/core/src/model/value_util.h"
 #include "Firestore/core/src/model/database_id.h"
 #include "Firestore/core/src/model/document_key.h"
 #include "Firestore/core/src/util/log.h"
+#include "Firestore/core/include/firebase/firestore/geo_point.h"
+#include "Firestore/core/include/firebase/firestore/timestamp.h"
 #include "Firestore/core/src/nanopb/nanopb_util.h"
 #include "Firestore/core/src/util/string_apple.h"
+#import "FIRFirestore+Internal.h"
 
 @class FIRTimestamp;
 
@@ -41,8 +45,10 @@ using firebase::firestore::google_protobuf_Timestamp;
 using nanopb::MakeNSData;
 using nanopb::MakeBytesArray;
 using nanopb::MakeByteString;
+using nanopb::MakeStringView;
 using api::MakeFIRGeoPoint;
 using api::MakeFIRTimestamp;
+using api::MakeFIRDocumentReference;
 using model::GetTypeOrder;
 using model::TypeOrder;
 using model::GetPreviousValue;
@@ -92,7 +98,7 @@ NS_ASSUME_NONNULL_BEGIN
     case TypeOrder::kBlob:
       return MakeNSData(value.bytes_value);
     case TypeOrder::kGeoPoint:
-      return MakeFIRGeoPoint(GeoPoint(value.geo_point_value.latitude, value.geo_point_value.longitude));
+      return MakeFIRGeoPoint(firebase::firestore::GeoPoint(value.geo_point_value.latitude, value.geo_point_value.longitude));
   }
 
   UNREACHABLE();
@@ -133,22 +139,21 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (FIRTimestamp *)convertedTimestamp:(const google_protobuf_Timestamp &)value {
-  return MakeFIRTimestamp({value.seconds, value.nanos});
+  return MakeFIRTimestamp(firebase::Timestamp{value.seconds, value.nanos});
 }
 
 - (FIRDocumentReference *)convertedReference:(const google_firestore_v1_Value &)value {
-  const auto &ref = value.reference_value;
-  const DatabaseId &refDatabase = DatabaseId::fromName(value.reference_value);
-  const DatabaseId &database = DocumentKey::fromName(value.reference_value);
-  if (refDatabase != database) {
+  absl::string_view ref = MakeStringView(value.reference_value);
+  DatabaseId databaseID = DatabaseId::FromName(ref);
+  DocumentKey key = DocumentKey::FromName(ref);
+  if (databaseID != _firestore.databaseID) {
     LOG_WARN("Document reference is for a different database (%s/%s) which "
              "is not supported. It will be treated as a reference within the current database "
              "(%s/%s) instead.",
-             refDatabase.project_id(),
-             refDatabase.database_id(), database.project_id(), database.database_id());
+             databaseID.project_id(),
+             databaseID.database_id(), databaseID.project_id(), databaseID.database_id());
   }
-  const DocumentKey &key = ref.key();
-  return [[FIRDocumentReference alloc] initWithKey:key firestore:_firestore];
+  return MakeFIRDocumentReference(key, _firestore);
 }
 
 

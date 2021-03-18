@@ -37,17 +37,17 @@ DatabaseId::DatabaseId(std::string project_id, std::string database_id) {
 }
 
 /* static */
-        /** Returns a DatabaseId from a fully qualified resource name. */
-       DatabaseId DatabaseId::fromName(absl::string_view name) {
+       DatabaseId DatabaseId::FromName(absl::string_view name) {
           ResourcePath resource_name = ResourcePath::FromString(name);
           HARD_ASSERT(
                   resource_name.size() >= 3
                   && resource_name[0] == "projects"
                   && resource_name[2]  =="databases",
                   "Tried to parse an invalid resource name: %s",
-                  resource_name);
+                  name);
           return DatabaseId{resource_name[1], resource_name[3]};
         }
+
 util::ComparisonResult DatabaseId::CompareTo(
     const firebase::firestore::model::DatabaseId& rhs) const {
   util::ComparisonResult cmp = util::Compare(project_id(), rhs.project_id());

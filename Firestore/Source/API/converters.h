@@ -25,6 +25,9 @@
 
 @class FIRGeoPoint;
 @class FIRTimestamp;
+@class FIRDocumentReference;
+@class FIRFirestore;
+@class DocumentKey;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -49,6 +52,9 @@ Timestamp MakeTimestamp(FIRTimestamp* timestamp);
 Timestamp MakeTimestamp(NSDate* date);
 
 FIRTimestamp* MakeFIRTimestamp(const Timestamp& timestamp);
+
+
+    FIRDocumentReference* MakeFIRDocumentReference(const DocumentKey& document_key, FIRFirestore * firestore);
 
 }  // namespace api
 }  // namespace firestore
