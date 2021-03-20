@@ -259,11 +259,15 @@ class ParseContext {
 /** The result of parsing document data (e.g. for a SetData call). */
 class ParsedSetData {
  public:
+    // TODO(mutabledocuments): Remove `ObjectValue` constructors and only take `MutableObjectValue`.
   ParsedSetData(model::ObjectValue data,
                 std::vector<model::FieldTransform> field_transforms);
   ParsedSetData(model::ObjectValue data,
                 model::FieldMask field_mask,
                 std::vector<model::FieldTransform> field_transforms);
+    ParsedSetData(model::MutableObjectValue data,
+                  model::FieldMask field_mask,
+                  std::vector<model::FieldTransform> field_transforms);
 
   /**
    * Converts the parsed document data into 1 or 2 mutations (depending on
