@@ -16,6 +16,9 @@
 
 #import "Firestore/Source/API/FSTUserDataReader.h"
 
+
+#include "Firestore/Protos/nanopb/google/firestore/v1/document.nanopb.h"
+
 #include <memory>
 #include <set>
 #include <string>
@@ -39,6 +42,7 @@
 #include "Firestore/core/src/model/field_path.h"
 #include "Firestore/core/src/model/field_transform.h"
 #include "Firestore/core/src/model/field_value.h"
+#include "Firestore/core/src/model/object_value.h"
 #include "Firestore/core/src/model/precondition.h"
 #include "Firestore/core/src/model/transform_operation.h"
 #include "Firestore/core/src/nanopb/nanopb_util.h"
@@ -68,11 +72,18 @@ using firebase::firestore::model::FieldTransform;
 using firebase::firestore::model::FieldValue;
 using firebase::firestore::model::NumericIncrementTransform;
 using firebase::firestore::model::ObjectValue;
+using firebase::firestore::model::MutableObjectValue;
 using firebase::firestore::model::Precondition;
 using firebase::firestore::model::ServerTimestampTransform;
 using firebase::firestore::model::TransformOperation;
 using firebase::firestore::nanopb::MakeByteString;
+using firebase::firestore::nanopb::MakeArray;
+using firebase::firestore::nanopb::MakeBytesArray;
 using firebase::firestore::util::ThrowInvalidArgument;
+using firebase::firestore::google_firestore_v1_Value;
+using firebase::firestore::google_firestore_v1_MapValue;
+using firebase::firestore::google_firestore_v1_ArrayValue;
+using firebase::firestore::google_firestore_v1_MapValue_FieldsEntry;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -124,6 +135,10 @@ NS_ASSUME_NONNULL_BEGIN
   return self;
 }
 
+- (ObjectValue)Warp:(const MutableObjectValue&)data {
+
+}
+
 - (ParsedSetData)parsedSetData:(id)input {
   // NOTE: The public API is typed as NSDictionary but we type 'input' as 'id' since we can't trust
   // Obj-C to verify the type for us.
@@ -132,10 +147,10 @@ NS_ASSUME_NONNULL_BEGIN
   }
 
   ParseAccumulator accumulator{UserDataSource::Set};
-  absl::optional<FieldValue> updateData = [self parseData:input context:accumulator.RootContext()];
+  absl::optional<google_firestore_v1_Value> updateData = [self parseData:input context:accumulator.RootContext()];
   HARD_ASSERT(updateData.has_value(), "Parsed data should not be nil.");
 
-  return std::move(accumulator).SetData(ObjectValue(std::move(*updateData)));
+  return std::move(accumulator).SetData(MutableObjectValue(std::move(*updateData)));
 }
 
 - (ParsedSetData)parsedMergeData:(id)input fieldMask:(nullable NSArray<id> *)fieldMask {
@@ -147,10 +162,10 @@ NS_ASSUME_NONNULL_BEGIN
 
   ParseAccumulator accumulator{UserDataSource::MergeSet};
 
-  absl::optional<FieldValue> updateData = [self parseData:input context:accumulator.RootContext()];
+  absl::optional<google_firestore_v1_Value> updateData = [self parseData:input context:accumulator.RootContext()];
   HARD_ASSERT(updateData.has_value(), "Parsed data should not be nil.");
 
-  ObjectValue updateObject = ObjectValue(std::move(*updateData));
+  MutableObjectValue updateObject = MutableObjectValue(std::move(*updateData));
 
   if (fieldMask) {
     std::set<FieldPath> validatedFieldPaths;
@@ -194,7 +209,7 @@ NS_ASSUME_NONNULL_BEGIN
 
   ParseAccumulator accumulator{UserDataSource::Update};
   __block ParseContext context = accumulator.RootContext();
-  __block ObjectValue updateData = ObjectValue::Empty();
+  __block MutableObjectValue updateData;
 
   [dict enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *) {
     FieldPath path;
@@ -224,15 +239,15 @@ NS_ASSUME_NONNULL_BEGIN
   return std::move(accumulator).UpdateData(updateData);
 }
 
-- (FieldValue)parsedQueryValue:(id)input {
+- (google_firestore_v1_Value)parsedQueryValue:(id)input {
   return [self parsedQueryValue:input allowArrays:false];
 }
 
-- (FieldValue)parsedQueryValue:(id)input allowArrays:(bool)allowArrays {
+- (google_firestore_v1_Value)parsedQueryValue:(id)input allowArrays:(bool)allowArrays {
   ParseAccumulator accumulator{allowArrays ? UserDataSource::ArrayArgument
                                            : UserDataSource::Argument};
 
-  absl::optional<FieldValue> parsed = [self parseData:input context:accumulator.RootContext()];
+  absl::optional<google_firestore_v1_Value> parsed = [self parseData:input context:accumulator.RootContext()];
   HARD_ASSERT(parsed, "Parsed data should not be nil.");
   HARD_ASSERT(accumulator.field_transforms().empty(),
               "Field transforms should have been disallowed.");
@@ -249,7 +264,7 @@ NS_ASSUME_NONNULL_BEGIN
  * @return The parsed value, or nil if the value was a FieldValue sentinel that should not be
  *   included in the resulting parsed data.
  */
-- (absl::optional<FieldValue>)parseData:(id)input context:(ParseContext &&)context {
+- (absl::optional<google_firestore_v1_Value>)parseData:(id)input context:(ParseContext &&)context {
   input = self.preConverter(input);
   if ([input isKindOfClass:[NSDictionary class]]) {
     return [self parseDictionary:(NSDictionary *)input context:std::move(context)];
@@ -277,51 +292,68 @@ NS_ASSUME_NONNULL_BEGIN
       if (context.array_element() && context.data_source() != UserDataSource::ArrayArgument) {
         ThrowInvalidArgument("Nested arrays are not supported");
       }
-      return [self parseArray:(NSArray *)input context:std::move(context)];
+      return absl::optional<google_firestore_v1_Value>([self parseArray:(NSArray *)input context:std::move(context)]);
     } else {
-      return [self parseScalarValue:input context:std::move(context)];
+      return absl::optional<google_firestore_v1_Value>([self parseScalarValue:input context:std::move(context)]);
     }
   }
 }
 
-- (FieldValue)parseDictionary:(NSDictionary<NSString *, id> *)dict
+- (google_firestore_v1_Value)parseDictionary:(NSDictionary<NSString *, id> *)dict
                       context:(ParseContext &&)context {
   if (dict.count == 0) {
     const FieldPath *path = context.path();
     if (path && !path->empty()) {
       context.AddToFieldMask(*path);
     }
-    return ObjectValue::Empty().AsFieldValue();
+    return MutableObjectValue{};
   } else {
-    __block ObjectValue result = ObjectValue::Empty();
+std::vector<google_firestore_v1_MapValue_FieldsEntry> fields;
 
+// Populate a vector of fields since we don't know the size of the final fields array.
     [dict enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *) {
-      absl::optional<FieldValue> parsedValue =
+      absl::optional<google_firestore_v1_Value> parsedValue =
           [self parseData:value context:context.ChildContext(util::MakeString(key))];
       if (parsedValue) {
-        FieldPath path = FieldPath{util::MakeString(key)};
-        result = result.Set(path, *parsedValue);
+        google_firestore_v1_MapValue_FieldsEntry fieldsEntry;
+        fieldsEntry.key = MakeBytesArray(util::MakeString(key));
+        fieldsEntry.value = *parsedValue;
+        fields.push_back(std::move(fieldsEntry));
       }
     }];
+
+
+    __block google_firestore_v1_Value result;
+    result.which_value_type = google_firestore_v1_Value_map_value_tag;
+    result.map_value.fields_count = static_cast<pb_size_t>(fields.size());
+    result.map_value.fields = MakeArray<google_firestore_v1_MapValue_FieldsEntry>(result.map_value.fields_count);
+
+    for (size_t i = 0; i < fields.size(); ++i) {
+      result.map_value.fields[i] = std::move(fields[i]);
+    }
 
     return result;
   }
 }
 
-- (FieldValue)parseArray:(NSArray<id> *)array context:(ParseContext &&)context {
-  __block FieldValue::Array result;
-  result.reserve(array.count);
+- (google_firestore_v1_Value)parseArray:(NSArray<id> *)array context:(ParseContext &&)context {
+  __block google_firestore_v1_Value result;
+  result.which_value_type = google_firestore_v1_Value_array_value_tag;
+  result.array_value.values_count = static_cast<pb_size_t>([array count]);
+  result.array_value.values = MakeArray<google_firestore_v1_Value>(result.array_value.values_count);
 
   [array enumerateObjectsUsingBlock:^(id entry, NSUInteger idx, BOOL *) {
-    absl::optional<FieldValue> parsedEntry = [self parseData:entry
+    absl::optional<google_firestore_v1_Value> parsedEntry = [self parseData:entry
                                                      context:context.ChildContext(idx)];
     if (!parsedEntry) {
       // Just include nulls in the array for fields being replaced with a sentinel.
-      parsedEntry = FieldValue::Null();
+      parsedEntry =  absl::optional<google_firestore_v1_Value> {google_firestore_v1_Value{google_firestore_v1_Value_null_value_tag}};
     }
-    result.push_back(*parsedEntry);
+
+    result.array_value.values[idx] = *parsedEntry;
   }];
-  return FieldValue::FromArray(std::move(result));
+
+  return result;
 }
 
 /**
